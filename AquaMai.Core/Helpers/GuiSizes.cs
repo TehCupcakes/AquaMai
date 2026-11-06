@@ -11,8 +11,8 @@ public static class GuiSizes
     public static bool SinglePlayer { get; set; } = false;
 
     /// <summary>
-    /// On-screen width of the 1P area in pixels when <see cref="SinglePlayer"/> is set.
-    /// Zero falls back to the dual-player layout derived from screen height.
+    /// On-screen width of one player area in pixels after window display scaling.
+    /// Zero falls back to the layout derived from screen height.
     /// </summary>
     public static float PlayerWidthOverride { get; set; }
 

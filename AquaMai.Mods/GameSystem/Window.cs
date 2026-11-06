@@ -1,9 +1,13 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using AquaMai.Config.Attributes;
 using AquaMai.Core;
 using AquaMai.Core.Attributes;
+using AquaMai.Core.Helpers;
+using HarmonyLib;
 using UnityEngine;
 
 namespace AquaMai.Mods.GameSystem;
@@ -32,11 +36,13 @@ public class Window
             Window width (and height) for windowed mode, rendering resolution for fullscreen mode.
             If set to 0, windowed mode will remember the user-set size, fullscreen mode will use the current display resolution.
             If the display size is incorrect, please set it to the screen resolution.
+            DisplayScale uses this size.
             """,
         zh: """
             宽度（和高度）窗口化时为游戏窗口大小，全屏时为渲染分辨率
             如果设为 0，窗口化将记住用户设定的大小，全屏时将使用当前显示器分辨率
             全屏时如果显示大小不正确，请改成屏幕的分辨率（如 2160x3840）
+            画面缩放（DisplayScale）使用该尺寸
             """)]
     private static readonly int width = 0;
 
@@ -60,6 +66,26 @@ public class Window
             否则 Windows 会用合成窗口模拟独占全屏，延迟反而比默认更高
             """)]
     private static readonly bool exclusiveFullscreen = false;
+
+    [ConfigEntry(
+        name: "画面缩放",
+        en: """
+            Scale the game display inside the existing window without changing the window size.
+            1.0 is the original pixel size (1080 wide per player). Values below 1 shrink it.
+            Applies to 1P, 2P, or both, depending on which sides are shown.
+            Width/height 0 uses the current window or display (e.g. fullscreen).
+            """,
+        zh: """
+            在不改变窗口大小的情况下缩放游戏画面
+            1.0 为原始像素大小（每名玩家宽 1080），小于 1 会缩小
+            根据当前显示的 1P / 2P 生效
+            宽高为 0 时使用当前窗口或显示器大小（例如全屏）
+            """)]
+    public static readonly float displayScale = 1.0f;
+
+    private const float MinDisplayScale = 0.1f;
+    private const float MaxDisplayScale = 4.0f;
+    private const float PlayerAreaWidth = 1080f;
 
     private const int GWL_STYLE = -16;
     private const uint WS_WHATEVER = 0x14CF0000;
@@ -94,6 +120,92 @@ public class Window
     private static bool IsSectionEnabled()
     {
         return ConfigLoader.Config != null && ConfigLoader.Config.GetSectionState(typeof(Window)).Enabled;
+    }
+
+    private static bool IsSinglePlayerEnabled()
+    {
+        return ConfigLoader.Config != null && ConfigLoader.Config.GetSectionState(typeof(SinglePlayer)).Enabled;
+    }
+
+    public static float GetDisplayScale()
+    {
+        if (float.IsNaN(displayScale) || float.IsInfinity(displayScale))
+        {
+            return 1.0f;
+        }
+
+        return Mathf.Clamp(displayScale, MinDisplayScale, MaxDisplayScale);
+    }
+
+    public static void ApplyDisplayViewport(Camera camera)
+    {
+        if (camera == null || !IsSectionEnabled()) return;
+
+        var scale = GetDisplayScale();
+        var outputW = GetOutputWidth();
+        var outputH = GetOutputHeight();
+        if (outputW <= 0 || outputH <= 0) return;
+
+        var contentW = IsSinglePlayerEnabled() ? PlayerAreaWidth : PlayerAreaWidth * 2f;
+        var contentH = camera.orthographicSize * 2f;
+        var viewW = contentW * scale / outputW;
+        var viewH = contentH * scale / outputH;
+        if (viewW > 1f || viewH > 1f)
+        {
+            var fit = Mathf.Min(1f / viewW, 1f / viewH);
+            viewW *= fit;
+            viewH *= fit;
+            scale *= fit;
+        }
+
+        camera.rect = new Rect((1f - viewW) / 2f, (1f - viewH) / 2f, viewW, viewH);
+        GuiSizes.PlayerWidthOverride = PlayerAreaWidth * scale;
+    }
+
+    public static void EnsureDisplayViewportUpdater(Camera camera)
+    {
+        if (camera == null || !IsSectionEnabled()) return;
+        if (camera.GetComponent<DisplayViewportUpdater>() == null)
+        {
+            camera.gameObject.AddComponent<DisplayViewportUpdater>();
+        }
+    }
+
+    private class DisplayViewportUpdater : MonoBehaviour
+    {
+        private int lastWidth;
+        private int lastHeight;
+
+        private void Start()
+        {
+            lastWidth = Screen.width;
+            lastHeight = Screen.height;
+        }
+
+        private void Update()
+        {
+            if (Screen.width == lastWidth && Screen.height == lastHeight) return;
+            lastWidth = Screen.width;
+            lastHeight = Screen.height;
+            ApplyDisplayViewport(Camera.main);
+        }
+    }
+
+    [HarmonyPatch]
+    public class ApplyDisplayScale
+    {
+        public static IEnumerable<MethodBase> TargetMethods()
+        {
+            return SinglePlayer.WhateverInitialize.TargetMethods();
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPriority(Priority.Last)]
+        public static void Postfix()
+        {
+            ApplyDisplayViewport(Camera.main);
+            EnsureDisplayViewportUpdater(Camera.main);
+        }
     }
 
     public static void OnBeforePatch()
