@@ -39,6 +39,47 @@ public partial class SinglePlayer
         zh: "只显示主区域，不显示副屏")]
     public static bool HideSubMonitor = false;
 
+    [ConfigEntry(
+        name: "1P画面缩放",
+        en: "Scale the 1P display inside the existing game window. 1.0 is the original size; values below 1 shrink it.",
+        zh: "在不改变游戏窗口大小的情况下调整 1P 画面比例。1.0 为原始大小，小于 1 会缩小。")]
+    public static float displayScale = 1.0f;
+
+    private const float MinDisplayScale = 0.1f;
+    private const float MaxDisplayScale = 4.0f;
+    private const float MainAreaHeight = 1080f;
+    private const float FullAreaHeight = 1920f;
+    private const float MainAreaCenterOffsetY = (MainAreaHeight - FullAreaHeight) / 2f;
+
+    private const string ScreenPositionAdjustMain1P = "[AquaMai] ScreenPositionAdjust Image Main 1P";
+    private const string ScreenPositionAdjustSub1P = "[AquaMai] ScreenPositionAdjust Image Sub 1P";
+    private const string ScreenPositionAdjustMain2P = "[AquaMai] ScreenPositionAdjust Image Main 2P";
+    private const string ScreenPositionAdjustSub2P = "[AquaMai] ScreenPositionAdjust Image Sub 2P";
+
+    private static void HideScreenPositionAdjustImage(string name)
+    {
+        var image = GameObject.Find(name);
+        if (image != null)
+        {
+            image.transform.localScale = Vector3.zero;
+        }
+    }
+
+    private static float GetDisplayScale()
+    {
+        if (float.IsNaN(displayScale) || float.IsInfinity(displayScale))
+        {
+            return 1.0f;
+        }
+
+        return Mathf.Clamp(displayScale, MinDisplayScale, MaxDisplayScale);
+    }
+
+    private static bool IsScreenPositionAdjustEnabled()
+    {
+        return ConfigLoader.Config.GetSectionState(typeof(ScreenPositionAdjust)).Enabled;
+    }
+
     [HarmonyPatch]
     public class WhateverInitialize
     {
@@ -51,16 +92,88 @@ public partial class SinglePlayer
 
         public static void Prefix(MonoBehaviour gameMainObject, ref Transform left, ref Transform right)
         {
-            if (ConfigLoader.Config.GetSectionState(typeof(ScreenPositionAdjust)).Enabled) return;
-            Vector3 position = Camera.main.gameObject.transform.position;
-            var yOffset = 0f;
+            // ScreenPositionAdjust installs its own render-texture camera and output canvas.
+            // Its matching postfix below applies the single-player settings after that setup.
+            if (IsScreenPositionAdjustEnabled()) return;
+
+            var mainCamera = Camera.main;
+            if (mainCamera != null)
+            {
+                var position = mainCamera.transform.position;
+                var orthographicSize = mainCamera.orthographicSize;
+
+                if (HideSubMonitor)
+                {
+                    position.y += MainAreaCenterOffsetY;
+                    orthographicSize = MainAreaHeight / 2f;
+                }
+
+                mainCamera.transform.position = new Vector3(position.x - 540f, position.y, position.z);
+                mainCamera.orthographicSize = orthographicSize / GetDisplayScale();
+            }
+
+            if (right != null)
+            {
+                right.localScale = Vector3.zero;
+            }
+        }
+    }
+
+    /// <summary>
+    /// ScreenPositionAdjust creates its display images in a prefix on the same game
+    /// initialization method. Apply our changes afterward so its camera setup cannot
+    /// overwrite the single-player crop or scale.
+    /// </summary>
+    [HarmonyPatch]
+    public class WhateverInitializePostfix
+    {
+        public static IEnumerable<MethodBase> TargetMethods()
+        {
+            return WhateverInitialize.TargetMethods();
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(ref Transform right)
+        {
+            if (!IsScreenPositionAdjustEnabled()) return;
+
+            if (right != null)
+            {
+                right.localScale = Vector3.zero;
+            }
+
+            // The compositor creates both players' images. Hide the 2P images too,
+            // otherwise a wide window could expose their blank render-texture area.
+            HideScreenPositionAdjustImage(ScreenPositionAdjustMain2P);
+            HideScreenPositionAdjustImage(ScreenPositionAdjustSub2P);
+
+            var mainCamera = Camera.main;
+            if (mainCamera == null) return;
+
             if (HideSubMonitor)
             {
-                yOffset = -420f;
-                Camera.main.orthographicSize = 540f;
+                // In ScreenPositionAdjust, the main image can be vertically offset
+                // (including when its compact layout is enabled). Use its actual
+                // center rather than assuming a fixed offset.
+                var mainImage = GameObject.Find(ScreenPositionAdjustMain1P);
+                if (mainImage != null)
+                {
+                    var position = mainImage.transform.position;
+                    var cameraPosition = mainCamera.transform.position;
+                    mainCamera.transform.position = new Vector3(position.x, position.y, cameraPosition.z);
+                }
+                else
+                {
+                    mainCamera.transform.position += new Vector3(0f, MainAreaCenterOffsetY, 0f);
+                }
+
+                HideScreenPositionAdjustImage(ScreenPositionAdjustSub1P);
+                mainCamera.orthographicSize = MainAreaHeight / 2f;
             }
-            Camera.main.gameObject.transform.position = new Vector3(position.x - 540f, position.y + yOffset, position.z);
-            right.localScale = Vector3.zero;
+
+            // Scaling the display camera keeps the Unity window dimensions unchanged
+            // while shrinking or enlarging the complete 1P output within that window.
+            mainCamera.orthographicSize /= GetDisplayScale();
         }
     }
 
