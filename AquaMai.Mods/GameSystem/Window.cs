@@ -2,6 +2,7 @@
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using AquaMai.Config.Attributes;
+using AquaMai.Core;
 using AquaMai.Core.Attributes;
 using UnityEngine;
 
@@ -67,6 +68,34 @@ public class Window
 
     private static IntPtr hwnd = IntPtr.Zero;
 
+    /// <summary>
+    /// Pixel width of the game output. An explicit Window width if set; otherwise the
+    /// current window, or the display size when width is 0 in fullscreen.
+    /// </summary>
+    public static int GetOutputWidth()
+    {
+        if (width != 0) return width;
+        if (windowed && Screen.width > 0) return Screen.width;
+        if (IsSectionEnabled()) return Display.main.systemWidth;
+        return Screen.width > 0 ? Screen.width : Display.main.systemWidth;
+    }
+
+    /// <summary>
+    /// Pixel height of the game output. See <see cref="GetOutputWidth"/>.
+    /// </summary>
+    public static int GetOutputHeight()
+    {
+        if (height != 0) return height;
+        if (windowed && Screen.height > 0) return Screen.height;
+        if (IsSectionEnabled()) return Display.main.systemHeight;
+        return Screen.height > 0 ? Screen.height : Display.main.systemHeight;
+    }
+
+    private static bool IsSectionEnabled()
+    {
+        return ConfigLoader.Config != null && ConfigLoader.Config.GetSectionState(typeof(Window)).Enabled;
+    }
+
     public static void OnBeforePatch()
     {
         if (windowed)
@@ -99,9 +128,7 @@ public class Window
         }
         else
         {
-            var width = Window.width == 0 ? Display.main.systemWidth : Window.width;
-            var height = Window.height == 0 ? Display.main.systemHeight : Window.height;
-            Screen.SetResolution(width, height, exclusiveFullscreen ? FullScreenMode.ExclusiveFullScreen : FullScreenMode.FullScreenWindow);
+            Screen.SetResolution(GetOutputWidth(), GetOutputHeight(), exclusiveFullscreen ? FullScreenMode.ExclusiveFullScreen : FullScreenMode.FullScreenWindow);
         }
     }
 

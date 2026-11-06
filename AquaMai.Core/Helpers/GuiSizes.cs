@@ -9,7 +9,14 @@ namespace AquaMai.Core.Helpers;
 public static class GuiSizes
 {
     public static bool SinglePlayer { get; set; } = false;
-    public static float PlayerWidth => Screen.height / 1920f * 1080;
+
+    /// <summary>
+    /// On-screen width of the 1P area in pixels when <see cref="SinglePlayer"/> is set.
+    /// Zero falls back to the dual-player layout derived from screen height.
+    /// </summary>
+    public static float PlayerWidthOverride { get; set; }
+
+    public static float PlayerWidth => PlayerWidthOverride > 0 ? PlayerWidthOverride : Screen.height / 1920f * 1080;
     public static float PlayerCenter => SinglePlayer ? Screen.width / 2f : Screen.width / 2f - PlayerWidth / 2;
     public static int FontSize => (int)(PlayerWidth * .015f);
     public static float LabelHeight => FontSize * 1.5f;

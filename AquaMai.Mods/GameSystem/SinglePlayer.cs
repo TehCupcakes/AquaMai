@@ -41,12 +41,22 @@ public partial class SinglePlayer
 
     [ConfigEntry(
         name: "1P画面缩放",
-        en: "Scale the 1P display inside the existing game window. 1.0 is the original size; values below 1 shrink it.",
-        zh: "在不改变游戏窗口大小的情况下调整 1P 画面比例。1.0 为原始大小，小于 1 会缩小。")]
-    public static float displayScale = 1.0f;
+        en: """
+            Scale the 1P display inside the existing game window.
+            1.0 is the original 1P pixel size (1080 wide); values below 1 shrink it.
+            The window/render size comes from GameSystem.Window (0 uses the current window or display, e.g. fullscreen).
+            """,
+        zh: """
+            在不改变游戏窗口大小的情况下调整 1P 画面比例。
+            1.0 为 1P 原始像素大小（宽 1080），小于 1 会缩小。
+            窗口/渲染尺寸来自 GameSystem.Window（0 表示使用当前窗口或显示器大小，例如全屏）。
+            """)]
+    public static readonly float displayScale = 1.0f;
 
     private const float MinDisplayScale = 0.1f;
     private const float MaxDisplayScale = 4.0f;
+    // Game-world size of one player, not the window. Window pixels come from Window.GetOutputWidth/Height.
+    private const float PlayerAreaWidth = 1080f;
     private const float MainAreaHeight = 1080f;
     private const float FullAreaHeight = 1920f;
     private const float MainAreaCenterOffsetY = (MainAreaHeight - FullAreaHeight) / 2f;
@@ -80,6 +90,60 @@ public partial class SinglePlayer
         return ConfigLoader.Config.GetSectionState(typeof(ScreenPositionAdjust)).Enabled;
     }
 
+    private static void ApplyDisplayViewport(Camera camera)
+    {
+        if (camera == null) return;
+
+        var scale = GetDisplayScale();
+        var outputW = Window.GetOutputWidth();
+        var outputH = Window.GetOutputHeight();
+        if (outputW <= 0 || outputH <= 0) return;
+
+        var contentW = PlayerAreaWidth;
+        var contentH = camera.orthographicSize * 2f;
+        var viewW = contentW * scale / outputW;
+        var viewH = contentH * scale / outputH;
+        if (viewW > 1f || viewH > 1f)
+        {
+            var fit = Mathf.Min(1f / viewW, 1f / viewH);
+            viewW *= fit;
+            viewH *= fit;
+            scale *= fit;
+        }
+
+        camera.rect = new Rect((1f - viewW) / 2f, (1f - viewH) / 2f, viewW, viewH);
+        GuiSizes.PlayerWidthOverride = contentW * scale;
+    }
+
+    private class DisplayViewportUpdater : MonoBehaviour
+    {
+        private int lastWidth;
+        private int lastHeight;
+
+        private void Start()
+        {
+            lastWidth = Screen.width;
+            lastHeight = Screen.height;
+        }
+
+        private void Update()
+        {
+            if (Screen.width == lastWidth && Screen.height == lastHeight) return;
+            lastWidth = Screen.width;
+            lastHeight = Screen.height;
+            ApplyDisplayViewport(Camera.main);
+        }
+    }
+
+    private static void EnsureDisplayViewportUpdater(Camera camera)
+    {
+        if (camera == null) return;
+        if (camera.GetComponent<DisplayViewportUpdater>() == null)
+        {
+            camera.gameObject.AddComponent<DisplayViewportUpdater>();
+        }
+    }
+
     [HarmonyPatch]
     public class WhateverInitialize
     {
@@ -108,8 +172,10 @@ public partial class SinglePlayer
                     orthographicSize = MainAreaHeight / 2f;
                 }
 
-                mainCamera.transform.position = new Vector3(position.x - 540f, position.y, position.z);
-                mainCamera.orthographicSize = orthographicSize / GetDisplayScale();
+                mainCamera.transform.position = new Vector3(position.x - PlayerAreaWidth / 2f, position.y, position.z);
+                mainCamera.orthographicSize = orthographicSize;
+                ApplyDisplayViewport(mainCamera);
+                EnsureDisplayViewportUpdater(mainCamera);
             }
 
             if (right != null)
@@ -171,9 +237,9 @@ public partial class SinglePlayer
                 mainCamera.orthographicSize = MainAreaHeight / 2f;
             }
 
-            // Scaling the display camera keeps the Unity window dimensions unchanged
-            // while shrinking or enlarging the complete 1P output within that window.
-            mainCamera.orthographicSize /= GetDisplayScale();
+            // Keep the Unity window size from GameSystem.Window and letterbox 1P inside it.
+            ApplyDisplayViewport(mainCamera);
+            EnsureDisplayViewportUpdater(mainCamera);
         }
     }
 
@@ -249,7 +315,8 @@ public partial class SinglePlayer
 
     public static void OnAfterPatch()
     {
-        Core.Helpers.GuiSizes.SinglePlayer = true;
+        GuiSizes.SinglePlayer = true;
+        GuiSizes.PlayerWidthOverride = PlayerAreaWidth * GetDisplayScale();
     }
 
     [ConfigEntry(
